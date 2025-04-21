@@ -18,27 +18,37 @@ def initialize_firebase(log_message=print):
     global db, firebase_bucket
 
     try:
+        log_message(f"Initializing Firebase with project ID: {os.getenv('FIREBASE_PROJECT_ID')}")
+        
         if not firebase_admin._apps:
             if os.getenv("K_SERVICE"):
+                log_message("Initializing in Cloud environment...")
                 firebase_admin.initialize_app(options={
                     'projectId': os.getenv("FIREBASE_PROJECT_ID"),
                     'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
                 })
             else:
-                cred = credentials.Certificate(firebase_credentials_path)
-                firebase_admin.initialize_app(cred, {
-                    'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
-                })
-            log_message(">>> Firebase initialized successfully")
+                log_message("Initializing in local environment...")
+                # For local development, try to use application default credentials
+                firebase_admin.initialize_app()
+                
+            log_message("Firebase initialized successfully")
         else:
-            log_message(">>> Firebase already initialized")
+            log_message("Firebase already initialized")
 
         db = firestore.client()
         firebase_bucket = storage.bucket()
+        
+        # Test Firestore connection
+        test_ref = db.collection('test').document('test')
+        test_ref.set({'test': 'test'})
+        test_ref.delete()
+        
+        log_message("Firestore connection test successful")
         return True
 
     except Exception as e:
-        log_message(f">>> ERROR initializing Firebase: {str(e)}")
+        log_message(f"ERROR initializing Firebase: {str(e)}")
         return False
 
 def get_user_data(user_id, log_message=print):

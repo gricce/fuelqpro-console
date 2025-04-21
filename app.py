@@ -320,6 +320,40 @@ def edit_admin_user():
         flash('Error updating user')
         return redirect(url_for('manage_admin_users'))
 
+@app.route("/debug-firebase")
+def debug_firebase():
+    try:
+        from services.firebase_service import initialize_firebase, firestore
+        
+        # Try to initialize Firebase
+        if not initialize_firebase(logger.info):
+            return "Failed to initialize Firebase", 500
+            
+        # Try to access Firestore
+        db = firestore.client()
+        
+        # Try to query admin_users collection
+        admin_users = db.collection('admin_users').stream()
+        users_found = []
+        
+        for admin in admin_users:
+            admin_data = admin.to_dict()
+            users_found.append({
+                'id': admin.id,
+                'username': admin_data.get('username'),
+                'name': admin_data.get('name')
+            })
+            
+        return {
+            'status': 'success',
+            'firebase_apps': len(firebase_admin._apps),
+            'users_found': users_found,
+            'project_id': os.getenv('FIREBASE_PROJECT_ID')
+        }
+        
+    except Exception as e:
+        return f"Error: {str(e)}", 500
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Starting admin console on port {port}")
