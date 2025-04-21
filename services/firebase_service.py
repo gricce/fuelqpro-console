@@ -14,27 +14,45 @@ def initialize_firebase(log_message=print):
         project_id = os.getenv("FIREBASE_PROJECT_ID")
         storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET")
         
-        log_message(f"Initializing Firebase with project ID: {project_id}")
-        
-        if not firebase_admin._apps:
-            # Initialize without credentials, using ADC
-            firebase_admin.initialize_app(options={
-                'projectId': project_id,
-                'storageBucket': storage_bucket
-            })
-            log_message("Firebase initialized successfully with application default credentials")
-        else:
-            log_message("Firebase already initialized")
+        if not project_id or not storage_bucket:
+            log_message(f"Missing required environment variables. Project ID: {project_id}, Storage Bucket: {storage_bucket}")
+            return False
 
+        log_message(f"Initializing Firebase with project ID: {project_id} and bucket: {storage_bucket}")
+        
+        # If Firebase is already initialized, delete the default app and reinitialize
+        if firebase_admin._apps:
+            log_message("Cleaning up existing Firebase app")
+            for app in firebase_admin._apps.values():
+                firebase_admin.delete_app(app)
+
+        # Initialize Firebase with both project ID and storage bucket
+        firebase_admin.initialize_app(options={
+            'projectId': project_id,
+            'storageBucket': storage_bucket
+        })
+        log_message("Firebase initialized successfully with application default credentials")
+
+        # Initialize Firestore
         db = firestore.client()
+        log_message("Firestore client initialized")
+
+        # Initialize Storage bucket
         firebase_bucket = storage.bucket()
+        log_message("Storage bucket initialized")
         
         # Test Firestore connection
         test_ref = db.collection('test').document('test')
         test_ref.set({'test': 'test'})
         test_ref.delete()
-        
         log_message("Firestore connection test successful")
+
+        # Test Storage bucket connection
+        test_blob = firebase_bucket.blob('test.txt')
+        test_blob.upload_from_string('test')
+        test_blob.delete()
+        log_message("Storage bucket connection test successful")
+        
         return True
 
     except Exception as e:
