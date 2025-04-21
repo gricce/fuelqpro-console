@@ -334,17 +334,44 @@ def edit_admin_user():
 
 @app.route("/debug-firebase")
 def debug_firebase():
+    debug_info = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'environment': {
+            'FIREBASE_PROJECT_ID': os.getenv('FIREBASE_PROJECT_ID'),
+            'FIREBASE_STORAGE_BUCKET': os.getenv('FIREBASE_STORAGE_BUCKET'),
+            'GOOGLE_CLOUD_PROJECT': os.getenv('GOOGLE_CLOUD_PROJECT'),
+            'K_SERVICE': os.getenv('K_SERVICE'),  # Will be set if running on Cloud Run
+        },
+        'initialization_steps': [],
+        'errors': [],
+        'final_status': 'not_started'
+    }
+    
     try:
+        debug_info['initialization_steps'].append("Starting Firebase initialization")
+        
         from services.firebase_service import initialize_firebase, firestore
         
+        # Custom logger to capture initialization logs
+        def log_collector(message):
+            debug_info['initialization_steps'].append(message)
+            logger.info(message)
+        
         # Try to initialize Firebase
-        if not initialize_firebase(logger.info):
-            return "Failed to initialize Firebase", 500
+        init_success = initialize_firebase(log_collector)
+        if not init_success:
+            debug_info['errors'].append("Firebase initialization returned False")
+            debug_info['final_status'] = 'failed'
+            return debug_info, 500
             
+        debug_info['initialization_steps'].append("Firebase initialized successfully")
+        
         # Try to access Firestore
+        debug_info['initialization_steps'].append("Attempting to access Firestore")
         db = firestore.client()
         
         # Try to query admin_users collection
+        debug_info['initialization_steps'].append("Attempting to query admin_users collection")
         admin_users = db.collection('admin_users').stream()
         users_found = []
         
@@ -355,16 +382,25 @@ def debug_firebase():
                 'username': admin_data.get('username'),
                 'name': admin_data.get('name')
             })
-            
-        return {
-            'status': 'success',
+        
+        debug_info.update({
+            'final_status': 'success',
             'firebase_apps': len(firebase_admin._apps),
-            'users_found': users_found,
-            'project_id': os.getenv('FIREBASE_PROJECT_ID')
-        }
+            'users_found': users_found
+        })
+        
+        return debug_info
         
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        import traceback
+        debug_info['errors'].extend([
+            f"Error type: {type(e).__name__}",
+            f"Error message: {str(e)}",
+            "Traceback:",
+            traceback.format_exc()
+        ])
+        debug_info['final_status'] = 'error'
+        return debug_info, 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
