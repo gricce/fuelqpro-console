@@ -8,7 +8,7 @@ DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "t")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Google Cloud Storage setup
-GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "fuelqpro-pdfs")
+GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "fuelqpro.firebasestorage.app")
 storage_client = storage.Client()
 
 # Initialize storage bucket
