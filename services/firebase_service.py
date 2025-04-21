@@ -23,7 +23,9 @@ def initialize_firebase(log_message=print):
         # If Firebase is already initialized, delete the default app and reinitialize
         if firebase_admin._apps:
             log_message("Cleaning up existing Firebase app")
-            for app in firebase_admin._apps.values():
+            # Fix: Create a list of apps to avoid modifying dict during iteration
+            app_list = list(firebase_admin._apps.values())
+            for app in app_list:
                 firebase_admin.delete_app(app)
 
         # Initialize Firebase with both project ID and storage bucket

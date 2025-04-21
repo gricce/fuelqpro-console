@@ -46,42 +46,75 @@ def admin_login():
         logger.info(f"Login attempt for username: {username}")
         
         try:
+            # Use the updated firebase_service.py
             from services.firebase_service import initialize_firebase, firestore
-            if not initialize_firebase(logger.info):
+            
+            logger.info("Attempting to initialize Firebase...")
+            init_result = initialize_firebase(logger.info)
+            if not init_result:
                 logger.error("Failed to initialize Firebase")
-                flash('Authentication error occurred')
+                flash('Authentication error: Firebase initialization failed')
                 return render_template("admin/login.html")
 
+            logger.info("Firebase initialized successfully, getting Firestore client...")
             db = firestore.client()
-            logger.info("Querying admin user...")
+            
+            logger.info(f"Querying admin user with username: {username}...")
             admin_ref = db.collection('admin_users').where('username', '==', username).limit(1)
             admin_docs = admin_ref.get()
             
-            admin_user = next(admin_docs, None)
+            admin_user = None
+            try:
+                admin_user = next(admin_docs, None)
+            except Exception as e:
+                logger.error(f"Error retrieving admin user: {str(e)}")
+                flash('Error retrieving user data')
+                return render_template("admin/login.html")
+            
             if admin_user:
                 logger.info("Found admin user, checking password...")
                 admin_data = admin_user.to_dict()
-                if bcrypt.checkpw(password.encode('utf-8'), admin_data['password'].encode('utf-8')):
-                    logger.info("Password correct, logging in...")
-                    session['admin_logged_in'] = True
-                    session['admin_id'] = admin_user.id
-                    session['admin_name'] = admin_data.get('name', username)
+                
+                # Ensure password is properly encoded for bcrypt
+                stored_password = admin_data.get('password', '')
+                if not stored_password:
+                    logger.error("Admin user has no password set")
+                    flash('Authentication error: Invalid user data')
+                    return render_template("admin/login.html")
+                
+                try:
+                    # Get encoded passwords for comparison
+                    input_pw = password.encode('utf-8')
+                    stored_pw = stored_password.encode('utf-8')
                     
-                    # Update last login
-                    admin_user.reference.update({
-                        'last_login': firestore.SERVER_TIMESTAMP
-                    })
-                    
-                    return redirect(url_for('admin_dashboard'))
-                else:
-                    logger.warning("Invalid password")
+                    logger.info("Comparing password hashes...")
+                    if bcrypt.checkpw(input_pw, stored_pw):
+                        logger.info("Password correct, logging in...")
+                        session['admin_logged_in'] = True
+                        session['admin_id'] = admin_user.id
+                        session['admin_name'] = admin_data.get('name', username)
+                        
+                        # Update last login
+                        logger.info("Updating last login timestamp...")
+                        admin_user.reference.update({
+                            'last_login': firestore.SERVER_TIMESTAMP
+                        })
+                        
+                        logger.info("Login successful, redirecting to dashboard...")
+                        return redirect(url_for('admin_dashboard'))
+                    else:
+                        logger.warning("Invalid password")
+                        flash('Invalid credentials: Password incorrect')
+                except Exception as e:
+                    logger.error(f"Password verification error: {str(e)}")
+                    flash('Authentication error: Password verification failed')
             else:
-                logger.warning("Admin user not found")
+                logger.warning(f"Admin user not found with username: {username}")
+                flash('Invalid credentials: User not found')
             
-            flash('Invalid credentials')
         except Exception as e:
             logger.error(f"Login error: {str(e)}")
-            flash('Authentication error occurred')
+            flash(f'Authentication error: {str(e)}')
             
     return render_template("admin/login.html")
 
