@@ -1,0 +1,121 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>PDF Plans Diagnostic</h1>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <h4>Error</h4>
+        <p>{{ error }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Summary -->
+    {% if summary %}
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">Plans Summary</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    <div class="border rounded p-3 text-center">
+                        <h3>{{ summary.total_users }}</h3>
+                        <p class="mb-0">Total Users</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded p-3 text-center">
+                        <h3>{{ summary.users_with_plans }}</h3>
+                        <p class="mb-0">Users With Plans</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded p-3 text-center">
+                        <h3>{{ summary.total_plans }}</h3>
+                        <p class="mb-0">Total Plans</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded p-3 text-center">
+                        <h3>{{ summary.percentage_with_plans }}%</h3>
+                        <p class="mb-0">Users With Plans</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Plans Table -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">PDF Plans Details</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Filename</th>
+                            <th>Created At</th>
+                            <th>URL</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if plans %}
+                            {% for plan in plans %}
+                            <tr>
+                                <td>{{ plan.user_name }} ({{ plan.user_id }})</td>
+                                <td>{{ plan.filename }}</td>
+                                <td>
+                                    {% if plan.created_at_formatted %}
+                                        {{ plan.created_at_formatted }}
+                                    {% else %}
+                                        {{ plan.created_at }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if 'MISSING' in plan.url|string %}
+                                        <span class="text-danger">{{ plan.url }}</span>
+                                    {% else %}
+                                        <small class="text-muted">{{ plan.url|truncate(30) }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if 'MISSING' not in plan.url|string %}
+                                    <a href="{{ plan.url }}" target="_blank" class="btn btn-sm btn-primary">
+                                        <i class='bx bx-download'></i> Download
+                                    </a>
+                                    {% else %}
+                                    <span class="text-danger">No URL</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center">No plans found in the database</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% if debug_info %}
+    <div class="card mt-4">
+        <div class="card-header bg-secondary text-white">
+            Debug Information
+        </div>
+        <div class="card-body">
+            <pre class="mb-0">{{ debug_info|join('\n') }}</pre>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

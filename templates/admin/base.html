@@ -14,6 +14,8 @@
             padding: 20px;
             background-color: #4285f4;
             color: white;
+            width: 250px;
+            overflow-y: auto;
         }
         .main-content {
             margin-left: 250px;
@@ -30,6 +32,14 @@
         .card {
             margin-bottom: 20px;
         }
+        .sidebar-heading {
+            color: rgba(255,255,255,0.7);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 20px;
+            padding-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -45,11 +55,25 @@
                     <a class="nav-link" href="{{ url_for('admin_users') }}">
                         <i class='bx bxs-user-detail'></i> Users
                     </a>
+                    <a class="nav-link" href="{{ url_for('admin_plans') }}">
+                        <i class='bx bxs-file-pdf'></i> Plans
+                    </a>
                     <a class="nav-link" href="{{ url_for('manage_admin_users') }}">
                         <i class='bx bxs-user-account'></i> Admin Users
                     </a>
-                    <a class="nav-link" href="{{ url_for('admin_plans') }}">
-                        <i class='bx bxs-file-pdf'></i> Plans
+                    
+                    <!-- Diagnostics Section -->
+                    <h6 class="sidebar-heading mt-4 mb-1">
+                        <span>Diagnostics</span>
+                    </h6>
+                    <a class="nav-link" href="{{ url_for('plans_diagnostic') }}">
+                        <i class='bx bxs-analyse'></i> PDF Plans Analysis
+                    </a>
+                    <a class="nav-link" href="{{ url_for('backend_data') }}">
+                        <i class='bx bxs-data'></i> Backend Data
+                    </a>
+                    <a class="nav-link" href="{{ url_for('debug_firebase') }}">
+                        <i class='bx bxs-bug'></i> Firebase Debug
                     </a>
                 </nav>
             </div>

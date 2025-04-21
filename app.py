@@ -520,6 +520,244 @@ def edit_admin_user():
         flash('Error updating user')
         return redirect(url_for('manage_admin_users'))
 
+@app.route("/backend-data")
+@admin_required
+def backend_data():
+    """
+    Display raw backend data from Firestore for debugging purposes.
+    This helps diagnose issues with the bot conversation and data structure.
+    """
+    debug_info = []
+    collections_data = {}
+    
+    try:
+        debug_info.append("Starting backend data route")
+        
+        # Use simple_initialize_firebase
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        debug_info.append("Imported Firebase services")
+        
+        if not simple_initialize_firebase():
+            debug_info.append("Firebase initialization failed")
+            flash('Error connecting to Firebase')
+            return render_template("admin/backend_data.html", 
+                                   error="Firebase connection failed", 
+                                   debug_info=debug_info)
+
+        debug_info.append("Firebase initialized successfully")
+        
+        # Get a list of all collections
+        collections = db.collections()
+        collection_names = [collection.id for collection in collections]
+        debug_info.append(f"Found collections: {', '.join(collection_names)}")
+        
+        # Process each collection
+        for collection_name in collection_names:
+            debug_info.append(f"Processing collection: {collection_name}")
+            collection_ref = db.collection(collection_name)
+            documents = collection_ref.stream()
+            
+            collection_docs = []
+            for doc in documents:
+                try:
+                    doc_data = doc.to_dict()
+                    
+                    # Process timestamps for display
+                    processed_data = {}
+                    for key, value in doc_data.items():
+                        if hasattr(value, 'seconds'):  # It's a timestamp
+                            try:
+                                processed_data[key] = datetime.datetime.fromtimestamp(value.seconds)
+                            except:
+                                processed_data[key] = f"Timestamp({value.seconds})"
+                        elif isinstance(value, list):
+                            # For lists (like pdf_plans), count them and show sample
+                            processed_data[key] = f"List with {len(value)} items"
+                            if value and len(value) > 0:
+                                if isinstance(value[0], dict):
+                                    # Show keys of the first item
+                                    processed_data[f"{key}_sample"] = f"Keys: {', '.join(value[0].keys())}"
+                        else:
+                            processed_data[key] = value
+                    
+                    collection_docs.append({
+                        'id': doc.id,
+                        'data': processed_data
+                    })
+                except Exception as e:
+                    debug_info.append(f"Error processing document {doc.id}: {str(e)}")
+            
+            collections_data[collection_name] = collection_docs
+        
+        # Special handling for users collection - check subcollections
+        if 'users' in collection_names:
+            debug_info.append("Checking user subcollections")
+            users_ref = db.collection('users')
+            users = users_ref.stream()
+            
+            user_subcollections = {}
+            for user in users:
+                try:
+                    # Get user subcollections (like interactions)
+                    user_subs = user.reference.collections()
+                    sub_names = [sub.id for sub in user_subs]
+                    
+                    if sub_names:
+                        user_subcollections[user.id] = sub_names
+                        debug_info.append(f"User {user.id} has subcollections: {', '.join(sub_names)}")
+                        
+                        # For each subcollection, get a sample document
+                        for sub_name in sub_names:
+                            sub_ref = user.reference.collection(sub_name)
+                            sub_docs = sub_ref.limit(5).stream()
+                            
+                            sample_docs = []
+                            for sub_doc in sub_docs:
+                                try:
+                                    sub_data = sub_doc.to_dict()
+                                    sample_docs.append({
+                                        'id': sub_doc.id,
+                                        'data': sub_data
+                                    })
+                                except Exception as e:
+                                    debug_info.append(f"Error processing subdocument {sub_doc.id}: {str(e)}")
+                            
+                            if sample_docs:
+                                collections_data[f"users/{user.id}/{sub_name}_samples"] = sample_docs
+                except Exception as e:
+                    debug_info.append(f"Error processing user subcollections for {user.id}: {str(e)}")
+        
+        return render_template("admin/backend_data.html", 
+                               collections_data=collections_data, 
+                               debug_info=debug_info)
+        
+    except Exception as e:
+        logger.error(f"Backend data page error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return render_template("admin/backend_data.html", 
+                               error=str(e), 
+                               debug_info=debug_info)
+
+
+@app.route("/plans-diagnostic")
+@admin_required
+def plans_diagnostic():
+    """
+    Special diagnostic page just for PDF plans in the database.
+    This helps identify issues with the PDF generation process.
+    """
+    debug_info = []
+    all_plans = []
+    users_with_plans = 0
+    total_users = 0
+    
+    try:
+        debug_info.append("Starting plans diagnostic route")
+        
+        # Use simple_initialize_firebase
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        debug_info.append("Imported Firebase services")
+        
+        if not simple_initialize_firebase():
+            debug_info.append("Firebase initialization failed")
+            flash('Error connecting to Firebase')
+            return render_template("admin/plans_diagnostic.html", 
+                                   error="Firebase connection failed", 
+                                   debug_info=debug_info)
+
+        debug_info.append("Firebase initialized successfully")
+        
+        # Get all users
+        users_ref = db.collection('users')
+        users = users_ref.stream()
+        
+        for user in users:
+            total_users += 1
+            try:
+                user_data = user.to_dict()
+                
+                # Check for pdf_plans field
+                if 'pdf_plans' not in user_data:
+                    debug_info.append(f"User {user.id} has no pdf_plans field")
+                    continue
+                
+                pdf_plans = user_data.get('pdf_plans', [])
+                
+                # Check if pdf_plans is a list
+                if not isinstance(pdf_plans, list):
+                    debug_info.append(f"User {user.id} has pdf_plans but it's not a list, it's a {type(pdf_plans)}")
+                    continue
+                
+                # Check if pdf_plans is empty
+                if not pdf_plans:
+                    debug_info.append(f"User {user.id} has an empty pdf_plans list")
+                    continue
+                
+                # User has plans
+                users_with_plans += 1
+                debug_info.append(f"User {user.id} has {len(pdf_plans)} plans")
+                
+                # Analyze each plan
+                for i, plan in enumerate(pdf_plans):
+                    try:
+                        if not isinstance(plan, dict):
+                            debug_info.append(f"  Plan {i} is not a dictionary, it's a {type(plan)}")
+                            continue
+                        
+                        # Extract plan details
+                        plan_info = {
+                            'user_id': user.id,
+                            'user_name': user_data.get('profile', {}).get('name', 'Unknown'),
+                            'plan_index': i,
+                        }
+                        
+                        # Check required fields
+                        for field in ['filename', 'url', 'created_at']:
+                            if field in plan:
+                                plan_info[field] = plan[field]
+                                if field == 'created_at' and hasattr(plan[field], 'seconds'):
+                                    # Convert timestamp to datetime
+                                    plan_info[f'{field}_formatted'] = datetime.datetime.fromtimestamp(plan[field].seconds)
+                            else:
+                                plan_info[field] = f"MISSING {field}"
+                                debug_info.append(f"  Plan {i} is missing {field} field")
+                        
+                        # Add to all plans
+                        all_plans.append(plan_info)
+                        
+                    except Exception as plan_error:
+                        debug_info.append(f"  Error processing plan {i}: {str(plan_error)}")
+                
+            except Exception as user_error:
+                debug_info.append(f"Error processing user {user.id}: {str(user_error)}")
+        
+        # Sort plans by created_at if available
+        try:
+            all_plans.sort(key=lambda x: x.get('created_at_formatted', datetime.datetime.min), reverse=True)
+        except:
+            debug_info.append("Error sorting plans by created_at")
+        
+        summary = {
+            'total_users': total_users,
+            'users_with_plans': users_with_plans,
+            'total_plans': len(all_plans),
+            'percentage_with_plans': round(users_with_plans / total_users * 100, 2) if total_users > 0 else 0
+        }
+        
+        return render_template("admin/plans_diagnostic.html", 
+                               plans=all_plans,
+                               summary=summary,
+                               debug_info=debug_info)
+        
+    except Exception as e:
+        logger.error(f"Plans diagnostic page error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return render_template("admin/plans_diagnostic.html", 
+                               error=str(e), 
+                               debug_info=debug_info)
+    
 @app.route("/debug-firebase")
 def debug_firebase():
     debug_info = {

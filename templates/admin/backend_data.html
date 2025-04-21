@@ -1,0 +1,98 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <h1>Backend Data</h1>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <h4>Error</h4>
+        <p>{{ error }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Explanation -->
+    <div class="alert alert-info">
+        <p>This page shows raw data from the Firestore database to help diagnose issues with the bot conversation and data structure.</p>
+        <p>Here you can see all collections, documents, and their fields as stored in the database.</p>
+    </div>
+
+    <!-- Collections accordion -->
+    <div class="accordion" id="collectionsAccordion">
+        {% for collection_name, documents in collections_data.items() %}
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="heading{{ loop.index }}">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                    data-bs-target="#collapse{{ loop.index }}" aria-expanded="false"
+                    aria-controls="collapse{{ loop.index }}">
+                    <strong>{{ collection_name }}</strong> ({{ documents|length }} documents)
+                </button>
+            </h2>
+            <div id="collapse{{ loop.index }}" class="accordion-collapse collapse"
+                aria-labelledby="heading{{ loop.index }}" data-bs-parent="#collectionsAccordion">
+                <div class="accordion-body">
+                    {% if documents|length > 0 %}
+                    <div class="accordion" id="docsAccordion{{ loop.index }}">
+                        {% for doc in documents %}
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="docHeading{{ loop.index }}_{{ loop.index }}">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                    data-bs-target="#docCollapse{{ loop.index }}_{{ loop.index }}"
+                                    aria-expanded="false"
+                                    aria-controls="docCollapse{{ loop.index }}_{{ loop.index }}">
+                                    Document ID: <strong>{{ doc.id }}</strong>
+                                </button>
+                            </h2>
+                            <div id="docCollapse{{ loop.index }}_{{ loop.index }}"
+                                class="accordion-collapse collapse"
+                                aria-labelledby="docHeading{{ loop.index }}_{{ loop.index }}"
+                                data-bs-parent="#docsAccordion{{ loop.index }}">
+                                <div class="accordion-body">
+                                    <table class="table table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>Field</th>
+                                                <th>Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for key, value in doc.data.items() %}
+                                            <tr>
+                                                <td>{{ key }}</td>
+                                                <td>
+                                                    {% if value is mapping %}
+                                                        <pre>{{ value|pprint }}</pre>
+                                                    {% else %}
+                                                        {{ value }}
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p>No documents found in this collection.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if debug_info %}
+    <div class="card mt-4">
+        <div class="card-header bg-secondary text-white">
+            Debug Information
+        </div>
+        <div class="card-body">
+            <pre class="mb-0">{{ debug_info|join('\n') }}</pre>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
