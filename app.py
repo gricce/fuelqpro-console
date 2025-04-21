@@ -472,7 +472,184 @@ def debug_firebase():
         })
         
         return debug_info
+
+  @app.route("/debug-auth")
+def debug_auth():
+    """
+    Debug route to test Firebase authentication without any login requirement.
+    This route helps diagnose issues with Firebase connection and admin user verification.
+    """
+    debug_info = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'environment': {
+            'FIREBASE_PROJECT_ID': os.getenv('FIREBASE_PROJECT_ID'),
+            'FIREBASE_STORAGE_BUCKET': os.getenv('FIREBASE_STORAGE_BUCKET'),
+            'FLASK_SECRET_KEY': os.getenv('FLASK_SECRET_KEY', '[Secret key is set]'),
+            'GOOGLE_APPLICATION_CREDENTIALS': os.getenv('GOOGLE_APPLICATION_CREDENTIALS'),
+            'GOOGLE_CLOUD_PROJECT': os.getenv('GOOGLE_CLOUD_PROJECT'),
+        },
+        'tests': [],
+        'firebase_apps': len(firebase_admin._apps) if hasattr(firebase_admin, '_apps') else 0,
+        'admin_user': None,
+        'password_verification': None,
+    }
+    
+    try:
+        # Test 1: Initialize Firebase
+        debug_info['tests'].append("Starting Firebase initialization")
         
+        # Import the simple_initialize_firebase function
+        from services.firebase_service import simple_initialize_firebase, db, firestore
+        
+        init_result = simple_initialize_firebase()
+        debug_info['tests'].append(f"Firebase initialization result: {init_result}")
+        
+        if not init_result:
+            debug_info['tests'].append("Firebase initialization failed")
+            return debug_info
+        
+        # Test 2: Check for admin user
+        debug_info['tests'].append("Checking for admin user")
+        
+        # First try with direct ID
+        admin_user = None
+        try:
+            admin_user_doc = db.collection('admin_users').document('admin_user').get()
+            if admin_user_doc.exists:
+                admin_user = admin_user_doc
+                admin_data = admin_user.to_dict()
+                debug_info['tests'].append("Found admin user with direct ID lookup")
+                debug_info['admin_user'] = {
+                    'id': 'admin_user',
+                    'username': admin_data.get('username'),
+                    'has_password': bool(admin_data.get('password')),
+                    'password_length': len(admin_data.get('password', '')) if admin_data.get('password') else 0,
+                    'password_starts_with': admin_data.get('password', '')[:10] + '...' if admin_data.get('password') else None,
+                }
+        except Exception as e:
+            debug_info['tests'].append(f"Error looking up admin by ID: {str(e)}")
+        
+        # If not found, try query
+        if not admin_user:
+            try:
+                debug_info['tests'].append("Trying to find admin user by query")
+                admin_ref = db.collection('admin_users').where('username', '==', 'admin').limit(1)
+                admin_docs = admin_ref.get()
+                
+                for doc in admin_docs:
+                    admin_user = doc
+                    admin_data = doc.to_dict()
+                    debug_info['tests'].append(f"Found admin user with query, ID: {doc.id}")
+                    debug_info['admin_user'] = {
+                        'id': doc.id,
+                        'username': admin_data.get('username'),
+                        'has_password': bool(admin_data.get('password')),
+                        'password_length': len(admin_data.get('password', '')) if admin_data.get('password') else 0,
+                        'password_starts_with': admin_data.get('password', '')[:10] + '...' if admin_data.get('password') else None,
+                    }
+                    break
+            except Exception as e:
+                debug_info['tests'].append(f"Error querying admin user: {str(e)}")
+        
+        if not admin_user:
+            debug_info['tests'].append("No admin user found")
+            return debug_info
+        
+        # Test 3: Test password verification
+        debug_info['tests'].append("Testing password verification")
+        
+        try:
+            admin_data = admin_user.to_dict()
+            stored_password = admin_data.get('password', '')
+            
+            if not stored_password:
+                debug_info['tests'].append("Admin user has no password set")
+                return debug_info
+            
+            # Test with known password
+            test_passwords = ["admin123", "admin", "password", "123456"]
+            verification_results = {}
+            
+            for password in test_passwords:
+                try:
+                    input_pw = password.encode('utf-8')
+                    stored_pw = stored_password.encode('utf-8')
+                    
+                    # Check if stored password is in valid bcrypt format
+                    is_valid_format = stored_pw.startswith(b'$2') and len(stored_pw) > 50
+                    
+                    if not is_valid_format:
+                        debug_info['tests'].append("Stored password is not in valid bcrypt format")
+                        verification_results[password] = "Invalid hash format"
+                        continue
+                    
+                    result = bcrypt.checkpw(input_pw, stored_pw)
+                    verification_results[password] = result
+                    
+                except Exception as e:
+                    verification_results[password] = f"Error: {str(e)}"
+            
+            debug_info['password_verification'] = verification_results
+            
+            # Create a new hash for comparison
+            try:
+                debug_info['tests'].append("Creating a new hash for comparison")
+                
+                new_hash = bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt())
+                new_hash_str = new_hash.decode('utf-8')
+                
+                debug_info['new_hash'] = {
+                    'length': len(new_hash_str),
+                    'starts_with': new_hash_str[:10] + '...',
+                    'original_works': bcrypt.checkpw("admin123".encode('utf-8'), new_hash),
+                }
+                
+            except Exception as e:
+                debug_info['tests'].append(f"Error creating new hash: {str(e)}")
+            
+        except Exception as e:
+            debug_info['tests'].append(f"Error during password verification: {str(e)}")
+        
+        # Test 4: Create a test admin user
+        try:
+            debug_info['tests'].append("Attempting to create/update test admin user")
+            
+            # Generate a new hash for admin123
+            new_hash = bcrypt.hashpw("admin123".encode('utf-8'), bcrypt.gensalt())
+            new_hash_str = new_hash.decode('utf-8')
+            
+            # Create/update a test admin user
+            test_admin_ref = db.collection('admin_users').document('test_admin')
+            test_admin_ref.set({
+                'username': 'test_admin',
+                'password': new_hash_str,
+                'name': 'Test Admin',
+                'email': 'test@example.com',
+                'created_at': firestore.SERVER_TIMESTAMP,
+            })
+            
+            debug_info['tests'].append("Test admin user created/updated successfully")
+            debug_info['test_admin'] = {
+                'username': 'test_admin',
+                'password': 'admin123',
+                'hash_length': len(new_hash_str),
+                'hash_starts_with': new_hash_str[:10] + '...',
+            }
+            
+        except Exception as e:
+            debug_info['tests'].append(f"Error creating test admin user: {str(e)}")
+        
+        return debug_info
+        
+    except Exception as e:
+        import traceback
+        debug_info['error'] = {
+            'type': type(e).__name__,
+            'message': str(e),
+            'traceback': traceback.format_exc(),
+        }
+        return debug_info
+
     except Exception as e:
         import traceback
         debug_info['errors'].extend([
