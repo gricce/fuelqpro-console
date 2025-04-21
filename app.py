@@ -1,9 +1,11 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, redirect, url_for, flash, session
 import os
 import datetime
 import collections
 import time
 import logging
+from functools import wraps
+import bcrypt
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -11,140 +13,299 @@ logger = logging.getLogger(__name__)
 
 # Create Flask app
 app = Flask(__name__)
+app.secret_key = os.getenv('FLASK_SECRET_KEY', 'Bv5hqlS2CsklVLlN5A1bgnTIa6l3tY84zZsQQCdo7Zo')
 
-# Setup logging queue
-log_messages = collections.deque(maxlen=100)
+# Admin authentication
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('admin_logged_in'):
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
 
-def log_message(message):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = f"[{timestamp}] {message}"
-    print(log_entry)
-    logger.info(message)
-    log_messages.append(log_entry)
-
-# Import services after logging is configured
-from services.whatsapp_service import process_whatsapp_message
-from services.openai_service import verify_openai_api
-from services.storage_service import verify_gcs
-from models.user import user_data_store
-import config
-
-# WhatsApp webhook
-@app.route("/whatsapp", methods=["POST"])
-def whatsapp_webhook():
-    start_time = time.time()
-    log_message(">>> Entered webhook")
-    
-    try:
-        sender = request.form.get('From')
-        incoming_msg = request.form.get('Body', '').strip()
+# Admin login
+@app.route("/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-        log_message(f">>> Received message: '{incoming_msg}' from {sender}")
-        
-        # Process the message and get response
-        response = process_whatsapp_message(sender, incoming_msg, log_message)
-        
-        log_message(f">>> Total processing time: {time.time() - start_time:.2f}s")
-        return response
-    
-    except Exception as e:
-        log_message(f">>> ERROR: {str(e)}")
-        from twilio.twiml.messaging_response import MessagingResponse
-        resp = MessagingResponse()
-        resp.message("Ocorreu um erro ao processar sua solicitação. Por favor, tente novamente.")
-        return str(resp)
+        try:
+            db = firestore.client()
+            admin_ref = db.collection('admin_users').where('username', '==', username).limit(1)
+            admin_docs = admin_ref.get()
+            
+            admin_user = next(admin_docs, None)
+            if admin_user:
+                admin_data = admin_user.to_dict()
+                if bcrypt.checkpw(password.encode('utf-8'), admin_data['password'].encode('utf-8')):
+                    session['admin_logged_in'] = True
+                    session['admin_id'] = admin_user.id
+                    session['admin_name'] = admin_data.get('name', username)
+                    
+                    # Update last login
+                    admin_user.reference.update({
+                        'last_login': firestore.SERVER_TIMESTAMP
+                    })
+                    
+                    return redirect(url_for('admin_dashboard'))
+            
+            flash('Invalid credentials')
+        except Exception as e:
+            logger.error(f"Login error: {str(e)}")
+            flash('Authentication error occurred')
+            
+    return render_template("admin/login.html")
 
 # Admin dashboard
-@app.route("/fuelqpro/console", methods=["GET"])
-def dashboard():
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    recent_logs = list(log_messages)
-    
-    # Get Firebase data for display
-    firebase_stats = {}
+@app.route("/", methods=["GET"])
+@admin_required
+def admin_dashboard():
     try:
-        from services.firebase_service import initialize_firebase
-        from firebase_admin import firestore
-        if initialize_firebase(log_message):
-            db = firestore.client()
-            users_ref = db.collection('users')
-            
-            # Count users
-            firebase_stats['user_count'] = len(list(users_ref.stream()))
-            
-            # Count PDF plans
-            firebase_stats['pdf_count'] = 0
-            for user in users_ref.stream():
-                user_data = user.to_dict()
-                firebase_stats['pdf_count'] += len(user_data.get('pdf_plans', []))
-            
-            # Get recent interactions
-            interactions = []
-            recent_interactions = (
-                db.collectionGroup('interactions')
-                .order_by('timestamp', direction=firestore.Query.DESCENDING)
-                .limit(10)
-                .stream()
-            )
-            
-            for interaction in recent_interactions:
-                interaction_data = interaction.to_dict()
-                interactions.append(interaction_data)
-            
-            firebase_stats['recent_interactions'] = interactions
-            
-    except Exception as e:
-        firebase_stats['error'] = str(e)
-    
-    return render_template(
-        "dashboard.html", 
-        timestamp=timestamp, 
-        logs=recent_logs,
-        users=user_data_store,
-        user_count=len(user_data_store),
-        firebase_stats=firebase_stats,
-        base_url="/fuelqpro/console"
-    )
+        # Initialize Firebase
+        from services.firebase_service import initialize_firebase, firestore
+        if not initialize_firebase(logger.info):
+            flash('Error connecting to Firebase')
+            return render_template("admin/dashboard.html", error="Firebase connection failed")
 
-# Health check endpoint
-@app.route("/fuelqpro/console/health", methods=["GET"])
-def health_check():
-    return "OK", 200
-
-# API verification endpoints  
-@app.route("/fuelqpro/console/verify-api-key", methods=["GET"])
-def verify_api_key_endpoint():
-    return verify_openai_api()
-
-@app.route("/fuelqpro/console/verify-gcs", methods=["GET"])
-def verify_gcs_endpoint():
-    return verify_gcs()
-
-# File download endpoint
-@app.route("/fuelqpro/console/download/<filename>", methods=["GET"])
-def download_file(filename):
-    """Serve files from Google Cloud Storage"""
-    try:
-        bucket = config.storage_bucket
-        if not bucket:
-            return "Storage not configured", 500
-            
-        blob = bucket.blob(filename)
-        if not blob.exists():
-            return "File not found", 404
-            
-        content = blob.download_as_bytes()
+        db = firestore.client()
         
-        return Response(
-            content,
-            mimetype='application/pdf',
-            headers={"Content-Disposition": f"attachment;filename={filename}"}
+        # Fetch statistics
+        stats = {
+            'total_users': 0,
+            'total_plans': 0,
+            'active_today': 0,
+            'plans_today': 0
+        }
+        
+        # Get current date for today's stats
+        today = datetime.datetime.now().date()
+        
+        users_ref = db.collection('users')
+        users = users_ref.stream()
+        
+        for user in users:
+            user_data = user.to_dict()
+            stats['total_users'] += 1
+            stats['total_plans'] += len(user_data.get('pdf_plans', []))
+            
+            # Check today's activity
+            last_activity = user_data.get('last_updated')
+            if last_activity and last_activity.date() == today:
+                stats['active_today'] += 1
+            
+            # Count today's plans
+            for plan in user_data.get('pdf_plans', []):
+                if plan.get('created_at').date() == today:
+                    stats['plans_today'] += 1
+        
+        # Get recent activities
+        activities = []
+        recent_interactions = (
+            db.collectionGroup('interactions')
+            .order_by('timestamp', direction=firestore.Query.DESCENDING)
+            .limit(20)
+            .stream()
         )
+        
+        for interaction in recent_interactions:
+            interaction_data = interaction.to_dict()
+            activities.append(interaction_data)
+        
+        return render_template(
+            "admin/dashboard.html",
+            stats=stats,
+            activities=activities,
+            timestamp=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+        
     except Exception as e:
-        log_message(f">>> ERROR downloading file: {str(e)}")
-        return "Error downloading file", 500
+        logger.error(f"Dashboard error: {str(e)}")
+        return render_template("admin/dashboard.html", error=str(e))
+
+# User management
+@app.route("/users", methods=["GET"])
+@admin_required
+def admin_users():
+    try:
+        from services.firebase_service import initialize_firebase, firestore
+        if not initialize_firebase(logger.info):
+            flash('Error connecting to Firebase')
+            return render_template("admin/users.html", error="Firebase connection failed")
+
+        db = firestore.client()
+        users_ref = db.collection('users')
+        users = []
+        
+        for user in users_ref.stream():
+            user_data = user.to_dict()
+            user_data['id'] = user.id
+            users.append(user_data)
+            
+        return render_template("admin/users.html", users=users)
+        
+    except Exception as e:
+        logger.error(f"Users page error: {str(e)}")
+        return render_template("admin/users.html", error=str(e))
+
+# Plans management
+@app.route("/plans", methods=["GET"])
+@admin_required
+def admin_plans():
+    try:
+        from services.firebase_service import initialize_firebase, firestore
+        if not initialize_firebase(logger.info):
+            flash('Error connecting to Firebase')
+            return render_template("admin/plans.html", error="Firebase connection failed")
+
+        db = firestore.client()
+        users_ref = db.collection('users')
+        plans = []
+        
+        for user in users_ref.stream():
+            user_data = user.to_dict()
+            for plan in user_data.get('pdf_plans', []):
+                plan['user_id'] = user.id
+                plan['user_name'] = user_data.get('profile', {}).get('name', 'Unknown')
+                plans.append(plan)
+                
+        plans.sort(key=lambda x: x.get('created_at', datetime.datetime.min), reverse=True)
+            
+        return render_template("admin/plans.html", plans=plans)
+        
+    except Exception as e:
+        logger.error(f"Plans page error: {str(e)}")
+        return render_template("admin/plans.html", error=str(e))
+
+# Admin users management
+@app.route("/admin-users", methods=["GET"])
+@admin_required
+def manage_admin_users():
+    try:
+        from services.firebase_service import initialize_firebase, firestore
+        if not initialize_firebase(logger.info):
+            flash('Error connecting to Firebase')
+            return render_template("admin/admin_users.html", error="Firebase connection failed")
+
+        db = firestore.client()
+        admin_users = []
+        
+        for admin in db.collection('admin_users').stream():
+            admin_data = admin.to_dict()
+            admin_data['id'] = admin.id
+            admin_data.pop('password', None)
+            admin_users.append(admin_data)
+            
+        return render_template("admin/admin_users.html", admin_users=admin_users)
+        
+    except Exception as e:
+        logger.error(f"Admin users page error: {str(e)}")
+        return render_template("admin/admin_users.html", error=str(e))
+
+@app.route("/admin-users", methods=["POST"])
+@admin_required
+def add_admin_user():
+    try:
+        username = request.form.get('username')
+        password = request.form.get('password')
+        name = request.form.get('name')
+        email = request.form.get('email')
+
+        db = firestore.client()
+        
+        # Check if username exists
+        existing = db.collection('admin_users').where('username', '==', username).limit(1).get()
+        if len(existing) > 0:
+            flash('Username already exists')
+            return redirect(url_for('manage_admin_users'))
+
+        # Hash password
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        db.collection('admin_users').add({
+            'username': username,
+            'password': hashed.decode('utf-8'),
+            'name': name,
+            'email': email,
+            'created_at': firestore.SERVER_TIMESTAMP,
+            'last_login': None
+        })
+        
+        flash('User added successfully')
+        return redirect(url_for('manage_admin_users'))
     
+    except Exception as e:
+        logger.error(f"Error adding user: {str(e)}")
+        flash('Error adding user')
+        return redirect(url_for('manage_admin_users'))
+
+@app.route("/admin-users/<user_id>", methods=["GET"])
+@admin_required
+def get_admin_user(user_id):
+    try:
+        db = firestore.client()
+        user_doc = db.collection('admin_users').document(user_id).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            return jsonify({
+                'name': user_data.get('name'),
+                'email': user_data.get('email')
+            })
+        return jsonify({'error': 'User not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route("/admin-users/<user_id>", methods=["DELETE"])
+@admin_required
+def delete_admin_user(user_id):
+    try:
+        db = firestore.client()
+        user_doc = db.collection('admin_users').document(user_id).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            if user_data.get('username') == 'admin':
+                return jsonify({'success': False, 'error': 'Cannot delete default admin user'})
+            
+            db.collection('admin_users').document(user_id).delete()
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'User not found'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route("/admin-users/edit", methods=["POST"])
+@admin_required
+def edit_admin_user():
+    try:
+        user_id = request.form.get('user_id')
+        name = request.form.get('name')
+        email = request.form.get('email')
+        password = request.form.get('password')
+
+        db = firestore.client()
+        user_ref = db.collection('admin_users').document(user_id)
+        
+        update_data = {
+            'name': name,
+            'email': email,
+            'updated_at': firestore.SERVER_TIMESTAMP
+        }
+        
+        if password:
+            hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            update_data['password'] = hashed.decode('utf-8')
+        
+        user_ref.update(update_data)
+        
+        flash('User updated successfully')
+        return redirect(url_for('manage_admin_users'))
+    
+    except Exception as e:
+        logger.error(f"Error updating user: {str(e)}")
+        flash('Error updating user')
+        return redirect(url_for('manage_admin_users'))
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    log_message(f"Starting application on port {port}")
+    logger.info(f"Starting admin console on port {port}")
     app.run(debug=False, host="0.0.0.0", port=port)

@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<h1 class="mb-4">Dashboard</h1>
+
+{% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+{% else %}
+    <div class="row">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Total Users</h5>
+                    <h2 class="card-text">{{ stats.total_users }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Total Plans</h5>
+                    <h2 class="card-text">{{ stats.total_plans }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Active Today</h5>
+                    <h2 class="card-text">{{ stats.active_today }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Plans Generated Today</h5>
+                    <h2 class="card-text">{{ stats.plans_today }}</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Recent Activity</h5>
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>User</th>
+                                    <th>Type</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for activity in activities %}
+                                <tr>
+                                    <td>{{ activity.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                    <td>{{ activity.user_id }}</td>
+                                    <td>{{ activity.message_type }}</td>
+                                    <td>{{ activity.message }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}
