@@ -19,13 +19,11 @@ RUN mkdir -p templates/admin static
 # Make sure all Python files are executable
 RUN find . -name "*.py" -exec chmod +x {} \;
 
-# Set environment variables
+# Set basic environment variables
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
-ENV FIREBASE_PROJECT_ID=fuelqpro
-ENV FIREBASE_STORAGE_BUCKET=fuelqpro.firebasestorage.app
 
 # Expose port for Cloud Run
 EXPOSE 8080
