@@ -6,6 +6,8 @@ import time
 import logging
 from functools import wraps
 import bcrypt
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -14,6 +16,16 @@ logger = logging.getLogger(__name__)
 # Create Flask app
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'Bv5hqlS2CsklVLlN5A1bgnTIa6l3tY84zZsQQCdo7Zo')
+
+# Initialize Firebase at app startup
+try:
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(options={
+            'projectId': os.getenv("FIREBASE_PROJECT_ID")
+        })
+    logger.info("Firebase initialized successfully at startup")
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase at startup: {str(e)}")
 
 # Admin authentication
 def admin_required(f):
