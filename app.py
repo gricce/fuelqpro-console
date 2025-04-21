@@ -1,9 +1,10 @@
-from flask import Flask, request, render_template, redirect, url_for, flash, session
+from flask import Flask, request, render_template, redirect, url_for, flash, session, jsonify
 import os
 import datetime
 import collections
 import time
 import logging
+import traceback
 from functools import wraps
 import bcrypt
 import firebase_admin
@@ -46,48 +47,70 @@ def admin_login():
         logger.info(f"Login attempt for username: {username}")
         
         try:
-            # Use the updated firebase_service.py
-            from services.firebase_service import initialize_firebase, firestore
+            # Use the simple_initialize_firebase function from the updated service
+            from services.firebase_service import simple_initialize_firebase, db, firestore
             
             logger.info("Attempting to initialize Firebase...")
-            init_result = initialize_firebase(logger.info)
+            init_result = simple_initialize_firebase()
             if not init_result:
                 logger.error("Failed to initialize Firebase")
                 flash('Authentication error: Firebase initialization failed')
                 return render_template("admin/login.html")
 
-            logger.info("Firebase initialized successfully, getting Firestore client...")
-            db = firestore.client()
+            logger.info("Firebase initialized successfully, proceeding with login...")
             
-            logger.info(f"Querying admin user with username: {username}...")
-            admin_ref = db.collection('admin_users').where('username', '==', username).limit(1)
-            admin_docs = admin_ref.get()
-            
+            # Try to find the admin user - first check if we created it with a known ID
             admin_user = None
+            
+            # First try to get the user with the known document ID
             try:
-                admin_user = next(admin_docs, None)
+                admin_user_doc = db.collection('admin_users').document('admin_user').get()
+                if admin_user_doc.exists and admin_user_doc.to_dict().get('username') == username:
+                    admin_user = admin_user_doc
+                    logger.info("Found admin user with direct ID lookup")
             except Exception as e:
-                logger.error(f"Error retrieving admin user: {str(e)}")
-                flash('Error retrieving user data')
-                return render_template("admin/login.html")
+                logger.warning(f"Error looking up admin by ID: {str(e)}")
+            
+            # If not found with direct ID, try query
+            if not admin_user:
+                try:
+                    logger.info(f"Querying admin user with username: {username}...")
+                    admin_ref = db.collection('admin_users').where('username', '==', username).limit(1)
+                    admin_docs = admin_ref.get()
+                    admin_user = next(admin_docs, None)
+                    if admin_user:
+                        logger.info("Found admin user with query")
+                except Exception as e:
+                    logger.error(f"Error retrieving admin user by query: {str(e)}")
+                    flash('Error retrieving user data')
+                    return render_template("admin/login.html")
             
             if admin_user:
-                logger.info("Found admin user, checking password...")
-                admin_data = admin_user.to_dict()
-                
-                # Ensure password is properly encoded for bcrypt
-                stored_password = admin_data.get('password', '')
-                if not stored_password:
-                    logger.error("Admin user has no password set")
-                    flash('Authentication error: Invalid user data')
-                    return render_template("admin/login.html")
-                
                 try:
+                    admin_data = admin_user.to_dict()
+                    
+                    # Ensure password is properly encoded for bcrypt
+                    stored_password = admin_data.get('password', '')
+                    if not stored_password:
+                        logger.error("Admin user has no password set")
+                        flash('Authentication error: Invalid user data')
+                        return render_template("admin/login.html")
+                    
+                    logger.info("Retrieved admin user data, checking password...")
+                    
                     # Get encoded passwords for comparison
                     input_pw = password.encode('utf-8')
                     stored_pw = stored_password.encode('utf-8')
                     
                     logger.info("Comparing password hashes...")
+                    
+                    # For debugging - check password formats
+                    logger.info(f"Input password length: {len(input_pw)}")
+                    logger.info(f"Stored password length: {len(stored_pw)}")
+                    
+                    # Print first few chars of hashed stored password for debugging
+                    logger.info(f"Stored password prefix: {stored_pw[:10]}...")
+                    
                     if bcrypt.checkpw(input_pw, stored_pw):
                         logger.info("Password correct, logging in...")
                         session['admin_logged_in'] = True
@@ -107,13 +130,14 @@ def admin_login():
                         flash('Invalid credentials: Password incorrect')
                 except Exception as e:
                     logger.error(f"Password verification error: {str(e)}")
-                    flash('Authentication error: Password verification failed')
+                    flash(f'Authentication error: {str(e)}')
             else:
                 logger.warning(f"Admin user not found with username: {username}")
                 flash('Invalid credentials: User not found')
             
         except Exception as e:
             logger.error(f"Login error: {str(e)}")
+            logger.error(traceback.format_exc())
             flash(f'Authentication error: {str(e)}')
             
     return render_template("admin/login.html")
@@ -123,13 +147,12 @@ def admin_login():
 @admin_required
 def admin_dashboard():
     try:
-        # Initialize Firebase
-        from services.firebase_service import initialize_firebase, firestore
-        if not initialize_firebase(logger.info):
+        # Use simple_initialize_firebase instead of initialize_firebase
+        from services.firebase_service import simple_initialize_firebase, db, firestore
+        
+        if not simple_initialize_firebase():
             flash('Error connecting to Firebase')
             return render_template("admin/dashboard.html", error="Firebase connection failed")
-
-        db = firestore.client()
         
         # Fetch statistics
         stats = {
@@ -157,21 +180,24 @@ def admin_dashboard():
             
             # Count today's plans
             for plan in user_data.get('pdf_plans', []):
-                if plan.get('created_at').date() == today:
+                if plan.get('created_at') and plan.get('created_at').date() == today:
                     stats['plans_today'] += 1
         
         # Get recent activities
         activities = []
-        recent_interactions = (
-            db.collectionGroup('interactions')
-            .order_by('timestamp', direction=firestore.Query.DESCENDING)
-            .limit(20)
-            .stream()
-        )
-        
-        for interaction in recent_interactions:
-            interaction_data = interaction.to_dict()
-            activities.append(interaction_data)
+        try:
+            recent_interactions = (
+                db.collectionGroup('interactions')
+                .order_by('timestamp', direction=firestore.Query.DESCENDING)
+                .limit(20)
+                .stream()
+            )
+            
+            for interaction in recent_interactions:
+                interaction_data = interaction.to_dict()
+                activities.append(interaction_data)
+        except Exception as e:
+            logger.warning(f"Error fetching recent activities: {str(e)}")
         
         return render_template(
             "admin/dashboard.html",
@@ -182,6 +208,7 @@ def admin_dashboard():
         
     except Exception as e:
         logger.error(f"Dashboard error: {str(e)}")
+        logger.error(traceback.format_exc())
         return render_template("admin/dashboard.html", error=str(e))
 
 # User management
@@ -189,12 +216,13 @@ def admin_dashboard():
 @admin_required
 def admin_users():
     try:
-        from services.firebase_service import initialize_firebase, firestore
-        if not initialize_firebase(logger.info):
+        # Use simple_initialize_firebase instead of initialize_firebase
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        if not simple_initialize_firebase():
             flash('Error connecting to Firebase')
             return render_template("admin/users.html", error="Firebase connection failed")
 
-        db = firestore.client()
         users_ref = db.collection('users')
         users = []
         
@@ -214,12 +242,13 @@ def admin_users():
 @admin_required
 def admin_plans():
     try:
-        from services.firebase_service import initialize_firebase, firestore
-        if not initialize_firebase(logger.info):
+        # Use simple_initialize_firebase instead of initialize_firebase
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        if not simple_initialize_firebase():
             flash('Error connecting to Firebase')
             return render_template("admin/plans.html", error="Firebase connection failed")
 
-        db = firestore.client()
         users_ref = db.collection('users')
         plans = []
         
@@ -243,12 +272,13 @@ def admin_plans():
 @admin_required
 def manage_admin_users():
     try:
-        from services.firebase_service import initialize_firebase, firestore
-        if not initialize_firebase(logger.info):
+        # Use simple_initialize_firebase instead of initialize_firebase
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        if not simple_initialize_firebase():
             flash('Error connecting to Firebase')
             return render_template("admin/admin_users.html", error="Firebase connection failed")
 
-        db = firestore.client()
         admin_users = []
         
         for admin in db.collection('admin_users').stream():
@@ -267,16 +297,21 @@ def manage_admin_users():
 @admin_required
 def add_admin_user():
     try:
+        # Import the simple_initialize_firebase function
+        from services.firebase_service import simple_initialize_firebase, db, firestore
+        
+        if not simple_initialize_firebase():
+            flash('Error connecting to Firebase')
+            return redirect(url_for('manage_admin_users'))
+            
         username = request.form.get('username')
         password = request.form.get('password')
         name = request.form.get('name')
         email = request.form.get('email')
-
-        db = firestore.client()
         
         # Check if username exists
         existing = db.collection('admin_users').where('username', '==', username).limit(1).get()
-        if len(existing) > 0:
+        if len(list(existing)) > 0:
             flash('Username already exists')
             return redirect(url_for('manage_admin_users'))
 
@@ -304,7 +339,12 @@ def add_admin_user():
 @admin_required
 def get_admin_user(user_id):
     try:
-        db = firestore.client()
+        # Import the simple_initialize_firebase function
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        if not simple_initialize_firebase():
+            return jsonify({'error': 'Error connecting to Firebase'}), 500
+            
         user_doc = db.collection('admin_users').document(user_id).get()
         if user_doc.exists:
             user_data = user_doc.to_dict()
@@ -314,13 +354,19 @@ def get_admin_user(user_id):
             })
         return jsonify({'error': 'User not found'}), 404
     except Exception as e:
+        logger.error(f"Error getting admin user: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route("/admin-users/<user_id>", methods=["DELETE"])
 @admin_required
 def delete_admin_user(user_id):
     try:
-        db = firestore.client()
+        # Import the simple_initialize_firebase function
+        from services.firebase_service import simple_initialize_firebase, db
+        
+        if not simple_initialize_firebase():
+            return jsonify({'success': False, 'error': 'Error connecting to Firebase'})
+            
         user_doc = db.collection('admin_users').document(user_id).get()
         if user_doc.exists:
             user_data = user_doc.to_dict()
@@ -331,18 +377,25 @@ def delete_admin_user(user_id):
             return jsonify({'success': True})
         return jsonify({'success': False, 'error': 'User not found'})
     except Exception as e:
+        logger.error(f"Error deleting admin user: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route("/admin-users/edit", methods=["POST"])
 @admin_required
 def edit_admin_user():
     try:
+        # Import the simple_initialize_firebase function
+        from services.firebase_service import simple_initialize_firebase, db, firestore
+        
+        if not simple_initialize_firebase():
+            flash('Error connecting to Firebase')
+            return redirect(url_for('manage_admin_users'))
+            
         user_id = request.form.get('user_id')
         name = request.form.get('name')
         email = request.form.get('email')
         password = request.form.get('password')
 
-        db = firestore.client()
         user_ref = db.collection('admin_users').document(user_id)
         
         update_data = {
@@ -383,15 +436,12 @@ def debug_firebase():
     try:
         debug_info['initialization_steps'].append("Starting Firebase initialization")
         
-        from services.firebase_service import initialize_firebase, firestore
-        
-        # Custom logger to capture initialization logs
-        def log_collector(message):
-            debug_info['initialization_steps'].append(message)
-            logger.info(message)
+        # Use simple_initialize_firebase for debugging
+        from services.firebase_service import simple_initialize_firebase, db
         
         # Try to initialize Firebase
-        init_success = initialize_firebase(log_collector)
+        debug_info['initialization_steps'].append("Attempting to initialize Firebase with simple_initialize_firebase")
+        init_success = simple_initialize_firebase()
         if not init_success:
             debug_info['errors'].append("Firebase initialization returned False")
             debug_info['final_status'] = 'failed'
@@ -401,7 +451,6 @@ def debug_firebase():
         
         # Try to access Firestore
         debug_info['initialization_steps'].append("Attempting to access Firestore")
-        db = firestore.client()
         
         # Try to query admin_users collection
         debug_info['initialization_steps'].append("Attempting to query admin_users collection")
