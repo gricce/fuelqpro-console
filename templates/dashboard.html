@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FuelQ Pro Status</title>
+    <meta http-equiv="refresh" content="10">
+    <base href="{{ base_url }}/">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #4285f4; }
+        .status { padding: 10px; background-color: #e8f0fe; border-radius: 5px; }
+        .logs { margin-top: 20px; border: 1px solid #ccc; padding: 10px; height: 500px; overflow-y: scroll; background-color: #f8f9fa; font-family: monospace; white-space: pre-wrap; }
+        .footer { margin-top: 20px; font-size: 0.8em; color: #666; }
+        .users { margin-top: 20px; }
+        .user-data { margin-bottom: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 5px; }
+        .twilio-debug { margin-top: 20px; padding: 10px; background-color: #ffe8e8; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>FuelQ Pro Bot Status</h1>
+    <div class="status">
+        <strong>Status:</strong> Running
+        <br>
+        <strong>Last Updated:</strong> {{ timestamp }}
+        <br>
+        <strong>Active Users:</strong> {{ user_count }}
+        <br>
+        <strong>OpenAI API Key:</strong> {{ "Configured" if openai_key else "Not Configured" }}
+        <br>
+        <strong>GCS Bucket:</strong> {{ "Configured" if gcs_bucket else "Not Configured" }}
+    </div>
+    
+    <div class="twilio-debug">
+        <h3>Twilio Sandbox Information</h3>
+        <p>Make sure your WhatsApp number has joined the Twilio Sandbox by sending "join [keyword]" to the Twilio WhatsApp number.</p>
+        <p>If messages aren't being delivered, check if you're within the 24-hour session window. Outside this window, only pre-registered templates can be used.</p>
+    </div>
+    
+    <h2>Recent Logs (auto-refreshes every 10 seconds)</h2>
+    <div class="logs">
+        {% for log in logs %}
+        {{ log }}
+        {% endfor %}
+    </div>
+    
+    <h2>Active Users</h2>
+    <div class="users">
+        {% for user_id, user_data in users.items() %}
+        <div class="user-data">
+            <strong>{{ user_id }}</strong><br>
+            Step: {{ user_data.step }}<br>
+            Profile: {{ user_data.profile }}
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div class="footer">
+        <p>FuelQ Pro WhatsApp Bot | Cloud Run Service</p>
+    </div>
+</body>
+</html>
