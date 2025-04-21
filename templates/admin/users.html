@@ -1,0 +1,78 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>Users</h1>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <h4>Error</h4>
+        <p>{{ error }}</p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Profile Data</th>
+                            <th>Plans</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if users %}
+                            {% for user in users %}
+                            <tr>
+                                <td>{{ user.id }}</td>
+                                <td>{{ user.get('profile', {}).get('name', 'Unknown') }}</td>
+                                <td>
+                                    {% if user.profile %}
+                                        <ul>
+                                            {% for key, value in user.profile.items() %}
+                                                {% if key != 'name' %}
+                                                    <li><strong>{{ key }}:</strong> {{ value }}</li>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </ul>
+                                    {% else %}
+                                        No profile data
+                                    {% endif %}
+                                </td>
+                                <td>{{ user.get('pdf_plans', [])|length }}</td>
+                                <td>
+                                    {% if user.last_updated %}
+                                        {{ user.last_updated.strftime('%Y-%m-%d %H:%M:%S') if user.last_updated.strftime else user.last_updated }}
+                                    {% else %}
+                                        Unknown
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center">No users found</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% if debug_info %}
+    <div class="card mt-4">
+        <div class="card-header bg-secondary text-white">
+            Debug Information
+        </div>
+        <div class="card-body">
+            <pre class="mb-0">{{ debug_info|join('\n') }}</pre>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

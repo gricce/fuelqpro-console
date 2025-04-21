@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>Nutrition Plans</h1>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <h4>Error</h4>
+        <p>{{ error }}</p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Filename</th>
+                            <th>Created At</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if plans %}
+                            {% for plan in plans %}
+                            <tr>
+                                <td>{{ plan.get('user_name', 'Unknown') }}</td>
+                                <td>{{ plan.get('filename', 'No filename') }}</td>
+                                <td>
+                                    {% if plan.created_at %}
+                                        {% if plan.created_at.strftime %}
+                                            {{ plan.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                                        {% else %}
+                                            {{ plan.created_at }}
+                                        {% endif %}
+                                    {% else %}
+                                        Unknown
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if plan.url %}
+                                    <a href="{{ plan.url }}" target="_blank" class="btn btn-sm btn-primary">
+                                        <i class='bx bx-download'></i> Download
+                                    </a>
+                                    {% else %}
+                                    <span class="text-muted">No URL available</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="4" class="text-center">No plans found</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    {% if debug_info %}
+    <div class="card mt-4">
+        <div class="card-header bg-secondary text-white">
+            Debug Information
+        </div>
+        <div class="card-body">
+            <pre class="mb-0">{{ debug_info|join('\n') }}</pre>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

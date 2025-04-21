@@ -215,57 +215,159 @@ def admin_dashboard():
 @app.route("/users", methods=["GET"])
 @admin_required
 def admin_users():
+    debug_info = []
     try:
+        debug_info.append("Starting admin_users route")
+        
         # Use simple_initialize_firebase instead of initialize_firebase
         from services.firebase_service import simple_initialize_firebase, db
         
+        debug_info.append("Imported Firebase services")
+        
         if not simple_initialize_firebase():
+            debug_info.append("Firebase initialization failed")
             flash('Error connecting to Firebase')
-            return render_template("admin/users.html", error="Firebase connection failed")
+            return render_template("admin/users.html", error="Firebase connection failed", debug_info=debug_info)
 
+        debug_info.append("Firebase initialized successfully")
         users_ref = db.collection('users')
+        
+        debug_info.append("Getting users stream")
+        users_stream = users_ref.stream()
+        
+        debug_info.append("Processing users")
         users = []
         
-        for user in users_ref.stream():
-            user_data = user.to_dict()
-            user_data['id'] = user.id
-            users.append(user_data)
+        for user in users_stream:
+            try:
+                user_data = user.to_dict()
+                
+                # Handle potential missing or malformed data
+                if not user_data:
+                    debug_info.append(f"User {user.id} has no data, skipping")
+                    continue
+                    
+                user_data['id'] = user.id
+                
+                # Sanitize user data to prevent template rendering errors
+                if 'profile' in user_data and not isinstance(user_data['profile'], dict):
+                    user_data['profile'] = {}
+                    
+                if 'pdf_plans' in user_data and not isinstance(user_data['pdf_plans'], list):
+                    user_data['pdf_plans'] = []
+                
+                users.append(user_data)
+                debug_info.append(f"Added user {user.id} to list")
+            except Exception as e:
+                debug_info.append(f"Error processing user {user.id}: {str(e)}")
+                # Continue with next user
+                continue
             
-        return render_template("admin/users.html", users=users)
+        debug_info.append(f"Processed {len(users)} users total")
+        return render_template("admin/users.html", users=users, debug_info=debug_info)
         
     except Exception as e:
         logger.error(f"Users page error: {str(e)}")
-        return render_template("admin/users.html", error=str(e))
+        logger.error(traceback.format_exc())
+        return render_template("admin/users.html", error=str(e), debug_info=debug_info)
+    
 
 # Plans management
 @app.route("/plans", methods=["GET"])
 @admin_required
 def admin_plans():
+    debug_info = []
     try:
+        debug_info.append("Starting admin_plans route")
+        
         # Use simple_initialize_firebase instead of initialize_firebase
         from services.firebase_service import simple_initialize_firebase, db
         
-        if not simple_initialize_firebase():
-            flash('Error connecting to Firebase')
-            return render_template("admin/plans.html", error="Firebase connection failed")
-
-        users_ref = db.collection('users')
-        plans = []
+        debug_info.append("Imported Firebase services")
         
-        for user in users_ref.stream():
-            user_data = user.to_dict()
-            for plan in user_data.get('pdf_plans', []):
-                plan['user_id'] = user.id
-                plan['user_name'] = user_data.get('profile', {}).get('name', 'Unknown')
-                plans.append(plan)
+        if not simple_initialize_firebase():
+            debug_info.append("Firebase initialization failed")
+            flash('Error connecting to Firebase')
+            return render_template("admin/plans.html", error="Firebase connection failed", debug_info=debug_info)
+
+        debug_info.append("Firebase initialized successfully")
+        users_ref = db.collection('users')
+        
+        debug_info.append("Getting users stream")
+        users_stream = users_ref.stream()
+        
+        debug_info.append("Processing users and plans")
+        plans = []
+        user_count = 0
+        plan_count = 0
+        error_count = 0
+        
+        for user in users_stream:
+            try:
+                user_count += 1
+                user_data = user.to_dict()
                 
-        plans.sort(key=lambda x: x.get('created_at', datetime.datetime.min), reverse=True)
-            
-        return render_template("admin/plans.html", plans=plans)
+                # Handle potential missing or malformed data
+                if not user_data:
+                    debug_info.append(f"User {user.id} has no data, skipping")
+                    continue
+                
+                # Handle missing or malformed pdf_plans
+                if 'pdf_plans' not in user_data or not isinstance(user_data['pdf_plans'], list):
+                    debug_info.append(f"User {user.id} has no valid pdf_plans, skipping")
+                    continue
+                
+                # Handle missing or malformed profile
+                if 'profile' not in user_data or not isinstance(user_data['profile'], dict):
+                    user_data['profile'] = {'name': 'Unknown User'}
+                
+                for plan in user_data.get('pdf_plans', []):
+                    try:
+                        # Ensure plan is a dictionary
+                        if not isinstance(plan, dict):
+                            debug_info.append(f"Invalid plan type for user {user.id}, skipping")
+                            continue
+                            
+                        plan_count += 1
+                        plan['user_id'] = user.id
+                        plan['user_name'] = user_data.get('profile', {}).get('name', 'Unknown')
+                        
+                        # Handle potential missing created_at
+                        if 'created_at' not in plan:
+                            plan['created_at'] = datetime.datetime.min
+                            
+                        plans.append(plan)
+                    except Exception as plan_error:
+                        error_count += 1
+                        debug_info.append(f"Error processing plan for user {user.id}: {str(plan_error)}")
+                        continue
+                        
+            except Exception as user_error:
+                error_count += 1
+                debug_info.append(f"Error processing user {user.id}: {str(user_error)}")
+                continue
+        
+        debug_info.append(f"Processed {user_count} users, {plan_count} plans, encountered {error_count} errors")
+        
+        # Sort plans by created_at date, handling potential missing or invalid dates
+        try:
+            plans.sort(key=lambda x: x.get('created_at', datetime.datetime.min), reverse=True)
+            debug_info.append("Plans sorted successfully")
+        except Exception as sort_error:
+            debug_info.append(f"Error sorting plans: {str(sort_error)}")
+            # Fallback: try to sort without using created_at if that's causing issues
+            try:
+                plans.sort(key=lambda x: x.get('user_name', ''), reverse=False)
+                debug_info.append("Plans sorted by username instead")
+            except:
+                debug_info.append("Unable to sort plans, displaying in original order")
+        
+        return render_template("admin/plans.html", plans=plans, debug_info=debug_info)
         
     except Exception as e:
         logger.error(f"Plans page error: {str(e)}")
-        return render_template("admin/plans.html", error=str(e))
+        logger.error(traceback.format_exc())
+        return render_template("admin/plans.html", error=str(e), debug_info=debug_info)
 
 # Admin users management
 @app.route("/admin-users", methods=["GET"])
