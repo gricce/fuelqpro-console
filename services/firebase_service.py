@@ -152,6 +152,71 @@ def log_interaction(user_id, message_type, message_content, response, log_messag
         log_message(f">>> Logged interaction for {user_id}")
         return True
 
+def simple_initialize_firebase():
+    """
+    A simplified version of the Firebase initialization function
+    that avoids common pitfalls and focuses on reliable initialization.
+    """
+    global db, firebase_bucket
+    
+    # Force set environment variables if not present
+    if not os.getenv("FIREBASE_PROJECT_ID"):
+        os.environ["FIREBASE_PROJECT_ID"] = "fuelqpro"
+    
+    if not os.getenv("FIREBASE_STORAGE_BUCKET"):
+        os.environ["FIREBASE_STORAGE_BUCKET"] = "fuelqpro.firebasestorage.app"
+    
+    try:
+        print("Starting Firebase initialization...")
+        
+        # Check for existing Firebase apps and clean up safely
+        if firebase_admin._apps:
+            print("Found existing Firebase apps, cleaning up...")
+            try:
+                # Convert keys to a list first to avoid the dictionary changed size error
+                app_names = list(firebase_admin._apps.keys())
+                for app_name in app_names:
+                    if app_name in firebase_admin._apps:  # Check again in case it was deleted
+                        print(f"Deleting app: {app_name}")
+                        firebase_admin.delete_app(firebase_admin._apps[app_name])
+            except Exception as e:
+                print(f"Error cleaning up Firebase apps: {str(e)}")
+                print("Continuing with initialization anyway...")
+        
+        # Initialize Firebase with only the project ID first
+        print(f"Initializing Firebase with project ID: {os.environ.get('FIREBASE_PROJECT_ID')}")
+        app = firebase_admin.initialize_app(options={
+            'projectId': os.environ.get("FIREBASE_PROJECT_ID")
+        })
+        print(f"Firebase app initialized with name: {app.name}")
+        
+        # Initialize Firestore
+        print("Initializing Firestore client...")
+        db = firestore.client()
+        print("Firestore client initialized.")
+        
+        # Test Firestore with a simple operation
+        print("Testing Firestore connection...")
+        test_doc = db.collection('test').document('test_doc')
+        test_doc.set({'test': 'test_value'})
+        test_result = test_doc.get()
+        if test_result.exists and test_result.to_dict().get('test') == 'test_value':
+            print("Firestore connection test successful!")
+            test_doc.delete()  # Clean up
+        else:
+            print("Firestore connection test failed!")
+        
+        # Try initializing storage separately
+        try:
+            print(f"Initializing Storage with bucket: {os.environ.get('FIREBASE_STORAGE_BUCKET')}")
+            firebase_bucket = storage.bucket(os.environ.get("FIREBASE_STORAGE_BUCKET"))
+            print("Storage bucket initialized.")
+        except Exception as storage_error:
+            print(f"Error initializing Storage (this is not critical for authentication): {str(storage_error)}")
+        
+        print("Firebase initialization completed successfully!")
+        return True
+    
     except Exception as e:
         log_message(f">>> ERROR logging interaction: {str(e)}")
         return False
