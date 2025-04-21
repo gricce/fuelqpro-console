@@ -1,25 +1,34 @@
-from services.firebase_service import initialize_firebase, firestore
+
+import firebase_admin
+from firebase_admin import credentials, firestore
 import bcrypt
-import logging
+import os
 
 def init_default_admin():
     try:
-        initialize_firebase()
+        print("Initializing Firebase...")
+        firebase_admin.initialize_app(options={
+            'projectId': os.getenv("FIREBASE_PROJECT_ID")
+        })
+        
+        print("Getting Firestore client...")
         db = firestore.client()
         
         # Check if admin user exists
+        print("Checking for existing admin user...")
         admin_ref = db.collection('admin_users').where('username', '==', 'admin').limit(1)
         existing_admin = admin_ref.get()
         
-        if len(existing_admin) > 0:
+        if len(list(existing_admin)) > 0:
             print("Default admin user already exists")
             return
         
         # Create default admin user
+        print("Creating new admin user...")
         password = 'admin'
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
         
-        db.collection('admin_users').add({
+        new_admin = db.collection('admin_users').add({
             'username': 'admin',
             'password': hashed.decode('utf-8'),
             'name': 'Administrator',
@@ -28,13 +37,15 @@ def init_default_admin():
             'last_login': None
         })
         
-        print("Default admin user created successfully")
+        print(f"Default admin user created successfully with ID: {new_admin[1].id}")
         print("Username: admin")
         print("Password: admin")
         print("Please change these credentials after first login!")
         
     except Exception as e:
         print(f"Error creating default admin: {str(e)}")
+        raise e
 
 if __name__ == "__main__":
     init_default_admin()
+

@@ -31,15 +31,26 @@ def admin_login():
         username = request.form.get('username')
         password = request.form.get('password')
         
+        logger.info(f"Login attempt for username: {username}")
+        
         try:
+            from services.firebase_service import initialize_firebase, firestore
+            if not initialize_firebase(logger.info):
+                logger.error("Failed to initialize Firebase")
+                flash('Authentication error occurred')
+                return render_template("admin/login.html")
+
             db = firestore.client()
+            logger.info("Querying admin user...")
             admin_ref = db.collection('admin_users').where('username', '==', username).limit(1)
             admin_docs = admin_ref.get()
             
             admin_user = next(admin_docs, None)
             if admin_user:
+                logger.info("Found admin user, checking password...")
                 admin_data = admin_user.to_dict()
                 if bcrypt.checkpw(password.encode('utf-8'), admin_data['password'].encode('utf-8')):
+                    logger.info("Password correct, logging in...")
                     session['admin_logged_in'] = True
                     session['admin_id'] = admin_user.id
                     session['admin_name'] = admin_data.get('name', username)
@@ -50,6 +61,10 @@ def admin_login():
                     })
                     
                     return redirect(url_for('admin_dashboard'))
+                else:
+                    logger.warning("Invalid password")
+            else:
+                logger.warning("Admin user not found")
             
             flash('Invalid credentials')
         except Exception as e:
