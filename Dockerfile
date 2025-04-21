@@ -24,6 +24,8 @@ ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
+ENV FIREBASE_PROJECT_ID=fuelqpro
+ENV FIREBASE_STORAGE_BUCKET=fuelqpro.appspot.com
 
 # Expose port for Cloud Run
 EXPOSE 8080
