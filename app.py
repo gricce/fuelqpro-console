@@ -671,12 +671,29 @@ def plans_diagnostic():
         
         # Get all users
         users_ref = db.collection('users')
-        users = users_ref.stream()
+        debug_info.append("Getting users collection reference")
+        
+        try:
+            users = list(users_ref.stream())
+            debug_info.append(f"Retrieved {len(users)} users from Firestore")
+        except Exception as e:
+            debug_info.append(f"Error retrieving users: {str(e)}")
+            users = []
         
         for user in users:
-            total_users += 1
             try:
-                user_data = user.to_dict()
+                debug_info.append(f"Processing user ID: {user.id}")
+                total_users += 1
+                
+                # Safely get user data
+                try:
+                    user_data = user.to_dict()
+                    if not user_data:
+                        debug_info.append(f"User {user.id} has empty data")
+                        continue
+                except Exception as e:
+                    debug_info.append(f"Error converting user {user.id} to dict: {str(e)}")
+                    continue
                 
                 # Check for pdf_plans field
                 if 'pdf_plans' not in user_data:
@@ -684,6 +701,7 @@ def plans_diagnostic():
                     continue
                 
                 pdf_plans = user_data.get('pdf_plans', [])
+                debug_info.append(f"User {user.id} pdf_plans is type: {type(pdf_plans)}")
                 
                 # Check if pdf_plans is a list
                 if not isinstance(pdf_plans, list):
@@ -699,9 +717,21 @@ def plans_diagnostic():
                 users_with_plans += 1
                 debug_info.append(f"User {user.id} has {len(pdf_plans)} plans")
                 
+                # Get profile name safely
+                try:
+                    profile = user_data.get('profile', {})
+                    if not isinstance(profile, dict):
+                        profile = {}
+                    user_name = profile.get('name', 'Unknown')
+                except Exception as e:
+                    debug_info.append(f"Error getting profile for user {user.id}: {str(e)}")
+                    user_name = 'Unknown'
+                
                 # Analyze each plan
                 for i, plan in enumerate(pdf_plans):
                     try:
+                        debug_info.append(f"Processing plan {i} for user {user.id}")
+                        
                         if not isinstance(plan, dict):
                             debug_info.append(f"  Plan {i} is not a dictionary, it's a {type(plan)}")
                             continue
@@ -709,17 +739,24 @@ def plans_diagnostic():
                         # Extract plan details
                         plan_info = {
                             'user_id': user.id,
-                            'user_name': user_data.get('profile', {}).get('name', 'Unknown'),
+                            'user_name': user_name,
                             'plan_index': i,
                         }
                         
                         # Check required fields
                         for field in ['filename', 'url', 'created_at']:
                             if field in plan:
+                                # Special handling for created_at
+                                if field == 'created_at':
+                                    created_at = plan[field]
+                                    if hasattr(created_at, 'seconds'):
+                                        try:
+                                            plan_info[f'{field}_formatted'] = datetime.datetime.fromtimestamp(created_at.seconds)
+                                        except Exception as e:
+                                            debug_info.append(f"  Error formatting timestamp: {str(e)}")
+                                            plan_info[f'{field}_formatted'] = None
+                                
                                 plan_info[field] = plan[field]
-                                if field == 'created_at' and hasattr(plan[field], 'seconds'):
-                                    # Convert timestamp to datetime
-                                    plan_info[f'{field}_formatted'] = datetime.datetime.fromtimestamp(plan[field].seconds)
                             else:
                                 plan_info[field] = f"MISSING {field}"
                                 debug_info.append(f"  Plan {i} is missing {field} field")
@@ -736,8 +773,10 @@ def plans_diagnostic():
         # Sort plans by created_at if available
         try:
             all_plans.sort(key=lambda x: x.get('created_at_formatted', datetime.datetime.min), reverse=True)
-        except:
-            debug_info.append("Error sorting plans by created_at")
+            debug_info.append("Plans sorted successfully")
+        except Exception as sort_error:
+            debug_info.append(f"Error sorting plans: {str(sort_error)}")
+            # Don't try to sort if it's causing errors
         
         summary = {
             'total_users': total_users,
@@ -757,6 +796,183 @@ def plans_diagnostic():
         return render_template("admin/plans_diagnostic.html", 
                                error=str(e), 
                                debug_info=debug_info)
+
+@app.route("/logs")
+@admin_required
+def system_logs():
+    """
+    View and filter system logs in the admin interface
+    """
+    debug_info = []
+    logs = []
+    categories = ['all', 'whatsapp', 'openai', 'storage', 'system', 'error']
+    
+    # Get query parameters
+    category = request.args.get('category', 'all')
+    lines = int(request.args.get('lines', 100))
+    search = request.args.get('search', '')
+    user_id = request.args.get('user_id', '')
+    
+    if category not in categories:
+        category = 'all'
+    
+    try:
+        debug_info.append(f"Reading logs for category: {category}")
+        
+        # Get logs directory
+        from services.logging_service import ensure_logs_directory
+        logs_dir = ensure_logs_directory()
+        
+        # Get log file path
+        log_file = os.path.join(logs_dir, f"{category}.log")
+        
+        if not os.path.exists(log_file):
+            debug_info.append(f"Log file {log_file} does not exist")
+            flash(f"No logs found for category: {category}")
+            return render_template("admin/logs.html", 
+                                  logs=[],
+                                  categories=categories,
+                                  selected_category=category,
+                                  lines=lines,
+                                  search=search,
+                                  user_id=user_id,
+                                  debug_info=debug_info)
+        
+        # Read log file (last N lines)
+        debug_info.append(f"Reading last {lines} lines from {log_file}")
+        
+        with open(log_file, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+        
+        # Get the last N lines, in reverse order (newest first)
+        all_lines = all_lines[-lines:]
+        all_lines.reverse()
+        
+        # Filter lines if search or user_id is provided
+        if search or user_id:
+            filtered_lines = []
+            for line in all_lines:
+                if search and search.lower() in line.lower():
+                    filtered_lines.append(line)
+                elif user_id and f"[User: {user_id}]" in line:
+                    filtered_lines.append(line)
+                elif search and user_id and search.lower() in line.lower() and f"[User: {user_id}]" in line:
+                    filtered_lines.append(line)
+                elif not search and not user_id:
+                    filtered_lines.append(line)
+            
+            debug_info.append(f"Filtered from {len(all_lines)} to {len(filtered_lines)} lines")
+            all_lines = filtered_lines
+        
+        # Process lines for display
+        for line in all_lines:
+            try:
+                # Parse the log line
+                timestamp_match = line.find(']')
+                if timestamp_match > 0:
+                    timestamp = line[1:timestamp_match]
+                    rest = line[timestamp_match+1:].strip()
+                else:
+                    timestamp = ""
+                    rest = line
+                
+                # Extract category
+                category_match = rest.find(']')
+                if category_match > 0:
+                    log_category = rest[1:category_match]
+                    rest = rest[category_match+1:].strip()
+                else:
+                    log_category = ""
+                
+                # Extract user ID if present
+                user_match = rest.find(']')
+                if user_match > 0 and rest.startswith('[User:'):
+                    user = rest[7:user_match]
+                    rest = rest[user_match+1:].strip()
+                else:
+                    user = ""
+                
+                # The rest is the message
+                message = rest
+                
+                # Add to logs list
+                logs.append({
+                    'timestamp': timestamp,
+                    'category': log_category,
+                    'user': user,
+                    'message': message,
+                    'raw': line
+                })
+            except Exception as e:
+                debug_info.append(f"Error parsing log line: {str(e)}")
+                logs.append({
+                    'timestamp': "",
+                    'category': "ERROR",
+                    'user': "",
+                    'message': f"Error parsing log: {str(e)}",
+                    'raw': line
+                })
+        
+        return render_template("admin/logs.html", 
+                              logs=logs,
+                              categories=categories,
+                              selected_category=category,
+                              lines=lines,
+                              search=search,
+                              user_id=user_id,
+                              debug_info=debug_info)
+        
+    except Exception as e:
+        logger.error(f"Logs page error: {str(e)}")
+        logger.error(traceback.format_exc())
+        return render_template("admin/logs.html", 
+                              error=str(e),
+                              logs=[],
+                              categories=categories,
+                              selected_category=category,
+                              lines=lines,
+                              search=search,
+                              user_id=user_id,
+                              debug_info=debug_info)
+
+@app.route("/logs/download/<category>")
+@admin_required
+def download_logs(category):
+    """Download log files"""
+    categories = ['all', 'whatsapp', 'openai', 'storage', 'system', 'error']
+    
+    if category not in categories:
+        flash(f"Invalid log category: {category}")
+        return redirect(url_for('system_logs'))
+    
+    try:
+        # Get logs directory
+        from services.logging_service import ensure_logs_directory
+        logs_dir = ensure_logs_directory()
+        
+        # Get log file path
+        log_file = os.path.join(logs_dir, f"{category}.log")
+        
+        if not os.path.exists(log_file):
+            flash(f"No logs found for category: {category}")
+            return redirect(url_for('system_logs'))
+        
+        # Generate a timestamp for the filename
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{category}_logs_{timestamp}.log"
+        
+        # Send the file
+        return send_file(
+            log_file,
+            mimetype='text/plain',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        logger.error(f"Log download error: {str(e)}")
+        flash(f"Error downloading logs: {str(e)}")
+        return redirect(url_for('system_logs'))
     
 @app.route("/debug-firebase")
 def debug_firebase():
